@@ -20,12 +20,10 @@
 OCF_RESKEY_unbound_default="/usr/sbin/unbound"
 OCF_RESKEY_uctrl_default="/usr/sbin/unbound-control"
 OCF_RESKEY_host_default="/usr/bin/host"
-OCF_RESKEY_unbound_user_default=unbound
 OCF_RESKEY_unbound_config_default=""
 OCF_RESKEY_unbound_pidfile_default="/var/run/unbound.pid"
 OCF_RESKEY_unbound_rootdir_default=""
 OCF_RESKEY_unbound_options_default=""
-OCF_RESKEY_unbound_keytab_file_default=""
 OCF_RESKEY_monitor_request_default="localhost"
 OCF_RESKEY_monitor_response_default="127.0.0.1"
 OCF_RESKEY_monitor_ip_default="127.0.0.1"
@@ -33,12 +31,10 @@ OCF_RESKEY_monitor_ip_default="127.0.0.1"
 : ${OCF_RESKEY_unbound=${OCF_RESKEY_unbound_default}}
 : ${OCF_RESKEY_uctrl=${OCF_RESKEY_uctrl_default}}
 : ${OCF_RESKEY_host=${OCF_RESKEY_host_default}}
-: ${OCF_RESKEY_unbound_user=${OCF_RESKEY_unbound_user_default}}
 : ${OCF_RESKEY_unbound_config=${OCF_RESKEY_unbound_config_default}}
 : ${OCF_RESKEY_unbound_pidfile=${OCF_RESKEY_unbound_pidfile_default}}
 : ${OCF_RESKEY_unbound_rootdir=${OCF_RESKEY_unbound_rootdir_default}}
 : ${OCF_RESKEY_unbound_options=${OCF_RESKEY_unbound_options_default}}
-: ${OCF_RESKEY_unbound_keytab_file=${OCF_RESKEY_unbound_keytab_file_default}}
 : ${OCF_RESKEY_monitor_request=${OCF_RESKEY_monitor_request_default}}
 : ${OCF_RESKEY_monitor_response=${OCF_RESKEY_monitor_response_default}}
 : ${OCF_RESKEY_monitor_ip=${OCF_RESKEY_monitor_ip_default}}
@@ -97,14 +93,6 @@ Path to the host command.
 <content type="string" default="${OCF_RESKEY_host_default}" />
 </parameter>
 
-<parameter name="unbound_user" unique="0" required="0">
-<longdesc lang="en">
-User that should own unbound process.
-</longdesc>
-<shortdesc lang="en">unbound_user</shortdesc>
-<content type="string" default="${OCF_RESKEY_unbound_user_default}" />
-</parameter>
-
 <parameter name="unbound_config" unique="1" required="0">
 <longdesc lang="en">
 Configuration file for unbound.
@@ -135,14 +123,6 @@ Options for unbound process if any.
 </longdesc>
 <shortdesc lang="en">unbound_options</shortdesc>
 <content type="string" default="${OCF_RESKEY_unbound_options_default}" />
-</parameter>
-
-<parameter name="unbound_keytab_file" unique="0" required="0">
-<longdesc lang="en">
-unbound service keytab file (for GSS-TSIG).
-</longdesc>
-<shortdesc lang="en">unbound_keytab_file</shortdesc>
-<content type="string" default="${OCF_RESKEY_unbound_keytab_file_default}" />
 </parameter>
 
 <parameter name="monitor_request" unique="0" required="0">
@@ -320,12 +300,11 @@ unbound_start() {
         OCF_RESKEY_unbound_options="-c $OCF_RESKEY_unbound_config $OCF_RESKEY_unbound_options"
     fi
 
-    if ! ${OCF_RESKEY_unbound} -u ${OCF_RESKEY_unbound_user} $root_dir_opt ${OCF_RESKEY_unbound_options}
+    if ! ${OCF_RESKEY_unbound} ${OCF_RESKEY_unbound_options}
     then
         ocf_log err "unbound failed to start."
         return $OCF_ERR_GENERIC
     fi
-    
     
     pid=`unbound_getpid`
     
