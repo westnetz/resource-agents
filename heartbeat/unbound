@@ -1,0 +1,455 @@
+#!/bin/sh
+#
+# Description:  Manages an unbound server as an OCF High-Availability resource.
+# 		Based on the unbound agent.
+#
+# Authors:      Benjamin Kiessling <mittagessen@l.unchti.me> 
+#
+# Copyright:    2011 Serge Dubrouski <sergeyfd@gmail.com>
+#		2012 Benjamin Kiessling <mittagessen@l.unchti.me>
+#                         
+# License:      GNU General Public License (GPL)
+#
+###############################################################################
+# Initialization:
+
+: ${OCF_FUNCTIONS_DIR=${OCF_ROOT}/lib/heartbeat}
+. ${OCF_FUNCTIONS_DIR}/ocf-shellfuncs
+
+#Defaults
+OCF_RESKEY_unbound_default="/usr/sbin/unbound"
+OCF_RESKEY_uctrl_default="/usr/sbin/unbound-control"
+OCF_RESKEY_host_default="/usr/bin/host"
+OCF_RESKEY_unbound_user_default=unbound
+OCF_RESKEY_unbound_config_default=""
+OCF_RESKEY_unbound_pidfile_default="/var/run/unbound.pid"
+OCF_RESKEY_unbound_rootdir_default=""
+OCF_RESKEY_unbound_options_default=""
+OCF_RESKEY_unbound_keytab_file_default=""
+OCF_RESKEY_monitor_request_default="localhost"
+OCF_RESKEY_monitor_response_default="127.0.0.1"
+OCF_RESKEY_monitor_ip_default="127.0.0.1"
+
+: ${OCF_RESKEY_unbound=${OCF_RESKEY_unbound_default}}
+: ${OCF_RESKEY_uctrl=${OCF_RESKEY_uctrl_default}}
+: ${OCF_RESKEY_host=${OCF_RESKEY_host_default}}
+: ${OCF_RESKEY_unbound_user=${OCF_RESKEY_unbound_user_default}}
+: ${OCF_RESKEY_unbound_config=${OCF_RESKEY_unbound_config_default}}
+: ${OCF_RESKEY_unbound_pidfile=${OCF_RESKEY_unbound_pidfile_default}}
+: ${OCF_RESKEY_unbound_rootdir=${OCF_RESKEY_unbound_rootdir_default}}
+: ${OCF_RESKEY_unbound_options=${OCF_RESKEY_unbound_options_default}}
+: ${OCF_RESKEY_unbound_keytab_file=${OCF_RESKEY_unbound_keytab_file_default}}
+: ${OCF_RESKEY_monitor_request=${OCF_RESKEY_monitor_request_default}}
+: ${OCF_RESKEY_monitor_response=${OCF_RESKEY_monitor_response_default}}
+: ${OCF_RESKEY_monitor_ip=${OCF_RESKEY_monitor_ip_default}}
+
+usage() {
+    cat <<EOF
+        usage: $0 start|stop|reload|status|monitor|meta-data|validate-all|methods
+
+        $0 manages unbound server as an HA resource.
+
+        The 'start' operation starts unbound server.
+        The 'stop' operation stops unbound server.
+        The 'reload' operation reload unbound configuration.
+        The 'status' operation reports whether unbound is up.
+        The 'monitor' operation reports whether unbound is running.
+        The 'validate-all' operation reports whether parameters are valid.
+        The 'methods' operation reports on the methods $0 supports.
+EOF
+  return $OCF_ERR_ARGS
+}
+
+unbound_meta_data() {
+        cat <<EOF
+<?xml version="1.0"?>
+<!DOCTYPE resource-agent SYSTEM "ra-api-1.dtd">
+<resource-agent name="unbound">
+<version>1.0</version>
+
+<longdesc lang="en">
+Resource script for unbound server. It manages unbound as an HA resource.
+</longdesc>
+<shortdesc lang="en">Manages a unbound server</shortdesc>
+
+<parameters>
+<parameter name="unbound" unique="0" required="0">
+<longdesc lang="en">
+Path to the unbound command.
+</longdesc>
+<shortdesc lang="en">unbound</shortdesc>
+<content type="string" default="${OCF_RESKEY_unbound_default}" />
+</parameter>
+
+<parameter name="uctrl" unique="0" required="0">
+<longdesc lang="en">
+Path to the unbound-control command.
+</longdesc>
+<shortdesc lang="en">unbound-control</shortdesc>
+<content type="string" default="${OCF_RESKEY_uctrl_default}" />
+</parameter>
+
+<parameter name="host" unique="0" required="0">
+<longdesc lang="en">
+Path to the host command.
+</longdesc>
+<shortdesc lang="en">host</shortdesc>
+<content type="string" default="${OCF_RESKEY_host_default}" />
+</parameter>
+
+<parameter name="unbound_user" unique="0" required="0">
+<longdesc lang="en">
+User that should own unbound process.
+</longdesc>
+<shortdesc lang="en">unbound_user</shortdesc>
+<content type="string" default="${OCF_RESKEY_unbound_user_default}" />
+</parameter>
+
+<parameter name="unbound_config" unique="1" required="0">
+<longdesc lang="en">
+Configuration file for unbound.
+</longdesc>
+<shortdesc lang="en">unbound_config</shortdesc>
+<content type="string" default="${OCF_RESKEY_unbound_config_default}" />
+</parameter>
+
+<parameter name="unbound_pidfile" unique="1" required="0">
+<longdesc lang="en">
+PIDFILE file for unbound.
+</longdesc>
+<shortdesc lang="en">unbound_pidfile</shortdesc>
+<content type="string" default="${OCF_RESKEY_unbound_pidfile_default}" />
+</parameter>
+
+<parameter name="unbound_rootdir" unique="1" required="0">
+<longdesc lang="en">
+Directory that unbound should use for chroot if any.
+</longdesc>
+<shortdesc lang="en">unbound_rootdir</shortdesc>
+<content type="string" default="${OCF_RESKEY_unbound_rootdir_default}" />
+</parameter>
+
+<parameter name="unbound_options" unique="0" required="0">
+<longdesc lang="en">
+Options for unbound process if any.
+</longdesc>
+<shortdesc lang="en">unbound_options</shortdesc>
+<content type="string" default="${OCF_RESKEY_unbound_options_default}" />
+</parameter>
+
+<parameter name="unbound_keytab_file" unique="0" required="0">
+<longdesc lang="en">
+unbound service keytab file (for GSS-TSIG).
+</longdesc>
+<shortdesc lang="en">unbound_keytab_file</shortdesc>
+<content type="string" default="${OCF_RESKEY_unbound_keytab_file_default}" />
+</parameter>
+
+<parameter name="monitor_request" unique="0" required="0">
+<longdesc lang="en">
+Request that shall be sent to unbound for monitoring. Usually an A record in DNS.
+</longdesc>
+<shortdesc lang="en">monitor_request</shortdesc>
+<content type="string" default="${OCF_RESKEY_monitor_request_default}" />
+</parameter>
+
+<parameter name="monitor_response" unique="0" required="0">
+<longdesc lang="en">
+Expected response from unbound server.
+</longdesc>
+<shortdesc lang="en">monitor_response</shortdesc>
+<content type="string" default="${OCF_RESKEY_monitor_response_default}" />
+</parameter>
+
+<parameter name="monitor_ip" unique="0" required="0">
+<longdesc lang="en">
+IP Address where unbound listens.
+</longdesc>
+<shortdesc lang="en">monitor_ip</shortdesc>
+<content type="string" default="${OCF_RESKEY_monitor_ip_default}" />
+</parameter>
+</parameters>
+
+<actions>
+<action name="start" timeout="60" />
+<action name="stop" timeout="60" />
+<action name="reload" timeout="60" />
+<action name="status" timeout="10" />
+<action name="monitor" depth="0" timeout="30" interval="30"/>
+<action name="meta-data" timeout="5" />
+<action name="validate-all" timeout="5" />
+<action name="methods" timeout="5" />
+</actions>
+</resource-agent>
+
+EOF
+}
+
+#
+# methods: What methods/operations do we support?
+#
+
+unbound_methods() {
+  cat <<EOF
+        start
+        stop
+        status
+        monitor
+        methods 
+        meta-data
+        validate-all
+EOF
+}
+
+# Validate most critical parameters
+unbound_validate_all() {
+    check_binary $OCF_RESKEY_unbound
+    check_binary $OCF_RESKEY_uctrl
+    check_binary $OCF_RESKEY_host
+
+    if [ -n "$OCF_RESKEY_unbound_config" -a \
+        ! -r "${OCF_RESKEY_unbound_rootdir}/${OCF_RESKEY_unbound_config}" ]; then
+        if ocf_is_probe; then
+           ocf_log info "Configuration file ${OCF_RESKEY_unbound_rootdir}/${OCF_RESKEY_unbound_config} not readable during probe."
+        else
+           ocf_log err "Configuration file ${OCF_RESKEY_unbound_rootdir}/${OCF_RESKEY_unbound_config} doesn't exist"
+           return $OCF_ERR_INSTALLED
+        fi
+    fi
+
+    getent passwd $OCF_RESKEY_unbound_user >/dev/null 2>&1
+    if [ ! $? -eq 0 ]; then
+        ocf_log err "User $OCF_RESKEY_unbound_user doesn't exist";
+        return $OCF_ERR_INSTALLED;
+    fi
+
+    if [ -z "$OCF_RESKEY_monitor_request" -o \
+         -z "$OCF_RESKEY_monitor_response" -o \
+         -z "$OCF_RESKEY_monitor_ip" ]; then
+        ocf_log err "None of monitor_request, monitor_response, and monitor_ip can be empty"
+        return $OCF_ERR_CONFIGURED
+    fi                            
+         
+    return $OCF_SUCCESS
+}
+
+#
+# unbound_getpid. Get pid of unbound process with a given parameters.
+#
+
+unbound_getpid () {
+    local pattern="$OCF_RESKEY_unbound"
+
+    if [ -n "$OCF_RESKEY_unbound_rootdir" ]; then
+       pattern="$pattern.*-t $OCF_RESKEY_unbound_rootdir"
+    fi
+
+    if [ -n "$OCF_RESKEY_unbound_config" ]; then
+       pattern="$pattern.*-c $OCF_RESKEY_unbound_config"
+    fi
+
+    pid=`ps -e -o pid,command,args | grep "$pattern" | grep -v grep | awk '{print $1}'`
+    echo $pid
+}
+
+#
+# unbound_status. Simple check of the status of unbound process by pidfile.
+#
+
+unbound_status () {
+    ocf_pidfile_status ${OCF_RESKEY_unbound_pidfile} >/dev/null 2>&1
+}
+
+#
+# unbound_monitor. Send a request to unbound and check response.
+#
+
+unbound_monitor() {
+    local output
+
+    if ! unbound_status
+    then
+        ocf_log info "unbound is down"
+        return $OCF_NOT_RUNNING
+    fi
+   
+    output=`$OCF_RESKEY_host $OCF_RESKEY_monitor_request $OCF_RESKEY_monitor_ip`
+
+    if [ $? -ne 0 ] || ! echo $output | grep -q '.* has .*address '"$OCF_RESKEY_monitor_response" 
+    then
+       ocf_log err "unbound didn't answer properly for $OCF_RESKEY_monitor_request."
+       ocf_log err "Expected: $OCF_RESKEY_monitor_response."
+       ocf_log err "Got: $output"
+       return $OCF_ERR_GENERIC
+    fi
+    
+    return $OCF_SUCCESS
+}
+
+#
+# Reload
+#
+
+unbound_reload() {
+    $OCF_RESKEY_uctrl reload >/dev/null || return $OCF_ERR_GENERIC
+    
+    return $OCF_SUCCESS
+}
+    
+#
+# Start
+#
+
+unbound_start() {    
+    local root_dir_opt
+    local pid
+    
+    root_dir_opt=""
+    unbound_status && return $OCF_SUCCESS
+    
+    # Remove pidfile if exists    
+    rm -f ${OCF_RESKEY_unbound_pidfile}
+    
+    if [ -n "${OCF_RESKEY_unbound_rootdir}" -a "x${OCF_RESKEY_unbound_rootdir}" != "x/" ]
+    then
+        root_dir_opt="-t ${OCF_RESKEY_unbound_rootdir}"
+        [ -s /etc/localtime ] && cp -fp /etc/localtime ${OCF_RESKEY_unbound_rootdir}/etc/localtime
+    fi
+
+    if [ -n "$OCF_RESKEY_unbound_config" ]; then
+        OCF_RESKEY_unbound_options="-c $OCF_RESKEY_unbound_config $OCF_RESKEY_unbound_options"
+    fi
+
+    if ! ${OCF_RESKEY_unbound} -u ${OCF_RESKEY_unbound_user} $root_dir_opt ${OCF_RESKEY_unbound_options}
+    then
+        ocf_log err "unbound failed to start."
+        return $OCF_ERR_GENERIC
+    fi
+    
+    
+    pid=`unbound_getpid`
+    
+    if [ -n "$pid" ]; then
+        if [ ! -e ${OCF_RESKEY_unbound_pidfile} ]; then
+            echo $pid > ${OCF_RESKEY_unbound_pidfile}
+        fi
+    else
+        ocf_log err "unbound failed to start. Probably error in configuration."
+        return $OCF_ERR_GENERIC
+    fi
+        
+    while :
+    do
+        unbound_monitor && break
+        sleep 1
+        ocf_log debug "unbound hasn't started yet."
+    done
+    ocf_log info "unbound has started."
+    
+    return $OCF_SUCCESS
+}
+    
+#
+# Stop
+# 
+
+unbound_stop () {
+    local timeout
+    local timewait
+    
+    unbound_status || return $OCF_SUCCESS
+    
+    $OCF_RESKEY_uctrl stop >/dev/null & 
+    if [ $? -ne 0 ]; then
+	ocf_log info "uctrl stop failed. Killing unbound."
+        kill `cat ${OCF_RESKEY_unbound_pidfile}`
+    fi
+ 
+    if [ -n "$OCF_RESKEY_CRM_meta_timeout" ]; then
+      # Allow 2/3 of the action timeout for the orderly shutdown
+      # (The origin unit is ms, hence the conversion)
+      timewait=$((OCF_RESKEY_CRM_meta_timeout/1500))
+    else
+      timewait=20
+    fi
+
+    sleep 1; timeout=0 # Sleep here for 1 sec to let unbound-control finish.
+    while unbound_status ; do
+        if [ $timeout -ge $timewait ]; then    
+            break
+        else
+            sleep 1
+            timeout=`expr $timeout + 1`
+            ocf_log debug "unbound appears to hung, waiting ..."
+        fi
+    done
+    
+    #If still up    
+    if unbound_status 2>&1; then
+        ocf_log err "unbound is still up! Killing"
+        kill -9 `cat ${OCF_RESKEY_unbound_pidfile}`
+    fi
+    
+    rm -f ${OCF_RESKEY_unbound_pidfile}
+    return $OCF_SUCCESS
+}
+
+
+# Main part
+
+if [ $# -ne 1 ]; then 
+    usage 
+    exit $OCF_ERR_GENERIC
+fi
+
+case "$1" in
+    methods)    unbound_methods
+                exit $?;;
+
+    meta-data)  unbound_meta_data
+                exit $OCF_SUCCESS;;
+esac
+
+unbound_validate_all
+rc=$?
+
+[ "$1" = "validate-all" ] && exit $rc
+
+if [ $rc -ne 0 ]
+then
+    case "$1" in
+        stop)    exit $OCF_SUCCESS;;
+        monitor) exit $OCF_NOT_RUNNING;;
+        status)  exit $OCF_NOT_RUNNING;;
+        *)       exit $rc;;
+    esac
+fi
+
+if [ "$EUID" != "0" ]; then 
+    ocf_log err "$0 must be run as root"
+    exit $OCF_ERR_GENERIC
+fi
+
+case "$1" in
+    status)     if unbound_status
+                then
+                    ocf_log info "unbound is up"
+                    exit $OCF_SUCCESS
+                else
+                    ocf_log info "unbound is down"
+                    exit $OCF_NOT_RUNNING
+                fi;;
+
+    monitor)    unbound_monitor
+                exit $?;;
+
+    start)      unbound_start
+                exit $?;;
+
+    stop)       unbound_stop
+                exit $?;;
+    reload)     unbound_reload
+                exit $?;;
+    *)
+                exit $OCF_ERR_UNIMPLEMENTED;;
+esac
