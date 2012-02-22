@@ -13,8 +13,8 @@
 ###############################################################################
 # Initialization:
 
-: ${OCF_FUNCTIONS_DIR=${OCF_ROOT}/lib/heartbeat}
-. ${OCF_FUNCTIONS_DIR}/ocf-shellfuncs
+: ${OCF_FUNCTIONS_DIR=${OCF_ROOT}/resource.d/heartbeat}
+. ${OCF_FUNCTIONS_DIR}/.ocf-shellfuncs
 
 #Defaults
 OCF_RESKEY_unbound_default="/usr/sbin/unbound"
@@ -281,21 +281,13 @@ unbound_reload() {
 #
 
 unbound_start() {    
-    local root_dir_opt
     local pid
     
-    root_dir_opt=""
     unbound_status && return $OCF_SUCCESS
     
     # Remove pidfile if exists    
     rm -f ${OCF_RESKEY_unbound_pidfile}
     
-    if [ -n "${OCF_RESKEY_unbound_rootdir}" -a "x${OCF_RESKEY_unbound_rootdir}" != "x/" ]
-    then
-        root_dir_opt="-t ${OCF_RESKEY_unbound_rootdir}"
-        [ -s /etc/localtime ] && cp -fp /etc/localtime ${OCF_RESKEY_unbound_rootdir}/etc/localtime
-    fi
-
     if [ -n "$OCF_RESKEY_unbound_config" ]; then
         OCF_RESKEY_unbound_options="-c $OCF_RESKEY_unbound_config $OCF_RESKEY_unbound_options"
     fi
@@ -402,11 +394,6 @@ then
         status)  exit $OCF_NOT_RUNNING;;
         *)       exit $rc;;
     esac
-fi
-
-if [ "$EUID" != "0" ]; then 
-    ocf_log err "$0 must be run as root"
-    exit $OCF_ERR_GENERIC
 fi
 
 case "$1" in
