@@ -1,0 +1,348 @@
+#!/bin/sh
+#
+#       OCF Resource Agent for Proxy ARP
+# Copyright (c) 2012 Christian Franke <nobody@nowhere.ws>
+#
+# Based on:
+#
+#       OCF Resource Agent compliant IPaddr2 script.
+#
+# 	Based on work by Tuomo Soini, ported to the OCF RA API by Lars
+# 	Marowsky-Brée. Implements Cluster Alias IP functionality too.
+#
+#	Cluster Alias IP cleanup, fixes and testing by Michael Schwartzkopff
+#
+#
+# Copyright (c) 2003 Tuomo Soini
+# Copyright (c) 2004-2006 SUSE LINUX AG, Lars Marowsky-Brée
+#                    All Rights Reserved.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of version 2 of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+#
+# Further, this software is distributed without any warranty that it is
+# free of the rightful claim of any third person regarding infringement
+# or the like.  Any license provided herein, whether implied or
+# otherwise, applies only to this software file.  Patent licenses, if
+# any, provided herein do not apply to combinations of this program with
+# other software, or any other product whatsoever.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc., 59 Temple Place - Suite 330, Boston MA 02111-1307, USA.
+#
+#
+
+#	OCF parameters are as below
+#	OCF_RESKEY_ip
+#       OCF_RESKEY_nic
+
+#######################################################################
+# Initialization:
+
+: ${OCF_FUNCTIONS_DIR=${OCF_ROOT}/resource.d/heartbeat}
+. ${OCF_FUNCTIONS_DIR}/.ocf-shellfuncs
+
+# Defaults
+OCF_RESKEY_arp_interval_default=200
+OCF_RESKEY_arp_count_default=5
+OCF_RESKEY_arp_bg_default=true
+OCF_RESKEY_arp_mac_default="ffffffffffff"
+
+: ${OCF_RESKEY_arp_interval=${OCF_RESKEY_arp_interval_default}}
+: ${OCF_RESKEY_arp_count=${OCF_RESKEY_arp_count_default}}
+: ${OCF_RESKEY_arp_bg=${OCF_RESKEY_arp_bg_default}}
+: ${OCF_RESKEY_arp_mac=${OCF_RESKEY_arp_mac_default}}
+#######################################################################
+
+SENDARP=$HA_BIN/send_arp
+SENDARPPIDDIR=$HA_RSCTMP
+
+#######################################################################
+
+meta_data() {
+	cat <<END
+<?xml version="1.0"?>
+<!DOCTYPE resource-agent SYSTEM "ra-api-1.dtd">
+<resource-agent name="proxyarp">
+<version>1.0</version>
+
+<longdesc lang="en">
+This Linux-specific resource manages Proxy arp.
+</longdesc>
+
+<shortdesc lang="en">Manages Proxy arp (Linux specific version)</shortdesc>
+
+<parameters>
+<parameter name="ip" unique="1" required="1">
+<longdesc lang="en">
+The IPv4 address to be configured in dotted quad notation, for example
+"192.168.1.1".
+</longdesc>
+<shortdesc lang="en">IPv4 address</shortdesc>
+<content type="string" />
+</parameter>
+<parameter name="nic" unique="1" required="1">
+<longdesc lang="en">
+The base network interface on which questions for arp will be replied to.
+</longdesc>
+<shortdesc lang="en">Network interface</shortdesc>
+<content type="string"/>
+</parameter>
+<parameter name="arp_interval">
+<longdesc lang="en">
+Specify the interval between unsolicited ARP packets in milliseconds.
+</longdesc>
+<shortdesc lang="en">ARP packet interval in ms</shortdesc>
+<content type="integer" default="${OCF_RESKEY_arp_interval_default}"/>
+</parameter>
+
+<parameter name="arp_count">
+<longdesc lang="en">
+Number of unsolicited ARP packets to send.
+</longdesc>
+<shortdesc lang="en">ARP packet count</shortdesc>
+<content type="integer" default="${OCF_RESKEY_arp_count_default}"/>
+</parameter>
+
+<parameter name="arp_bg">
+<longdesc lang="en">
+Whether or not to send the arp packets in the background.
+</longdesc>
+<shortdesc lang="en">ARP from background</shortdesc>
+<content type="string" default="${OCF_RESKEY_arp_bg_default}"/>
+</parameter>
+
+<parameter name="arp_mac">
+<longdesc lang="en">
+MAC address to send the ARP packets to.
+
+You really shouldn't be touching this.
+
+</longdesc>
+<shortdesc lang="en">ARP MAC</shortdesc>
+<content type="string" default="${OCF_RESKEY_arp_mac_default}"/>
+</parameter>
+
+</parameters>
+<actions>
+<action name="start"   timeout="20s" />
+<action name="stop"    timeout="20s" />
+<action name="status" depth="0"  timeout="20s" interval="10s" />
+<action name="monitor" depth="0"  timeout="20s" interval="10s" />
+<action name="meta-data"  timeout="5s" />
+<action name="validate-all"  timeout="20s" />
+</actions>
+</resource-agent>
+END
+
+	exit $OCF_SUCCESS
+}
+
+ip_init() {
+	local rc
+
+	if [ X`uname -s` != "XLinux" ]; then
+		ocf_log err "IPaddr2 only supported Linux."
+		exit $OCF_ERR_INSTALLED
+	fi
+
+	if [ X"$OCF_RESKEY_ip" = "X" ]; then
+		ocf_log err "IP address (the ip parameter) is mandatory"
+		exit $OCF_ERR_CONFIGURED
+	fi
+
+	if [ X"$OCF_RESKEY_nic" = "X" ]; then
+		ocf_log err "nic (the interface) is mandatory"
+		exit $OCF_ERR_CONFIGURED
+	fi
+
+	if
+          case $__OCF_ACTION in
+            start|stop)		ocf_is_root;;
+            *)			true;;
+          esac
+        then
+          : YAY!
+        else
+		ocf_log err "You must be root for $__OCF_ACTION operation."
+		exit $OCF_ERR_PERM
+	fi
+
+	IP="$OCF_RESKEY_ip"
+	NIC="$OCF_RESKEY_nic"
+	SENDARPPIDFILE="$SENDARPPIDDIR/send_arp-$OCF_RESKEY_ip"
+}
+
+#
+#        Delete an interface
+#
+delete_interface () {
+	local cmd ipaddr iface
+	ipaddr="$1"
+	iface="$2"
+
+	cmd="$IP2UTIL neigh del proxy $ipaddr dev $iface"
+
+	# Failure of the following command is ignored, as it would cause
+	# the resource to become unmanaged. (This happens e.g. when the
+	# monitor detects failure, and pacemaker tries to restart the resource)
+	ocf_run $cmd
+
+	return $OCF_SUCCESS
+}
+
+#
+#        Add an interface
+#
+add_interface () {
+	local cmd msg ipaddr netmask broadcast iface label
+
+	ipaddr="$1"
+	iface="$2"
+
+	cmd="$IP2UTIL neigh add proxy $ipaddr dev $iface"
+	msg="Adding proxy arp for $ipaddr on $iface"
+
+	ocf_log info "$msg"
+	ocf_run $cmd || return $OCF_ERR_GENERIC
+
+	return $OCF_SUCCESS
+}
+
+#
+# Run send_arp to note peers about new mac address
+#
+run_send_arp() {
+	ARGS="-i $OCF_RESKEY_arp_interval -r $OCF_RESKEY_arp_count -p $SENDARPPIDFILE $NIC $OCF_RESKEY_ip auto not_used not_used"
+	ocf_log info "$SENDARP $ARGS"
+	if ocf_is_true $OCF_RESKEY_arp_bg; then
+		($SENDARP $ARGS || ocf_log err "Could not send gratuitous arps" &) >&2
+	else
+		$SENDARP $ARGS || ocf_log err "Could not send gratuitous arps"
+	fi
+}
+
+#######################################################################
+
+ip_usage() {
+	cat <<END
+usage: $0 {start|stop|status|monitor|validate-all|meta-data}
+
+Expects to have a fully populated OCF RA-compliant environment set.
+END
+}
+
+ip_start() {
+	if [ -z "$NIC" -o -z "$IP" ]; then # no nic found or specified
+		exit $OCF_ERR_CONFIGURED
+	fi
+
+	add_interface $OCF_RESKEY_ip $NIC
+
+	if [ $? -ne 0 ]; then
+		ocf_log err "$CMD failed."
+		exit $OCF_ERR_GENERIC
+	fi
+
+	if [ -x $SENDARP ]; then
+		run_send_arp
+	fi
+
+	exit $OCF_SUCCESS
+}
+
+ip_stop() {
+	if [ -f "$SENDARPPIDFILE" ] ; then
+		kill `cat "$SENDARPPIDFILE"`
+		if [ $? -ne 0 ]; then
+			ocf_log warn "Could not kill previously running send_arp for $OCF_RESKEY_ip"
+		else
+			ocf_log info "killed previously running send_arp for $OCF_RESKEY_ip"
+			rm -f "$SENDARPPIDFILE"
+		fi
+	fi
+
+	delete_interface $OCF_RESKEY_ip $NIC $NETMASK
+	if [ $? -ne 0 ]; then
+		exit $OCF_ERR_GENERIC
+	fi
+
+	exit $OCF_SUCCESS
+}
+
+ip_running() {
+	local proxy_entries
+
+	proxy_entries=`grep ' 0xc ' /proc/net/arp | grep -c -F "$IP"`
+	if [ $proxy_entries -gt 0 ]; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+ip_monitor() {
+	if ip_running; then
+		return $OCF_SUCCESS
+	else
+		exit $OCF_NOT_RUNNING
+	fi
+}
+
+ip_validate() {
+    check_binary $IP2UTIL
+    check_binary grep
+
+    ip_init
+
+    if ocf_is_decimal "$OCF_RESKEY_arp_interval" && [ $OCF_RESKEY_arp_interval -gt 0 ]; then
+	:
+    else
+	ocf_log err "Invalid OCF_RESKEY_arp_interval [$OCF_RESKEY_arp_interval]"
+	exit $OCF_ERR_CONFIGURED
+    fi
+
+    if ocf_is_decimal "$OCF_RESKEY_arp_count" && [ $OCF_RESKEY_arp_count -gt 0 ]; then
+	:
+    else
+	ocf_log err "Invalid OCF_RESKEY_arp_count [$OCF_RESKEY_arp_count]"
+	exit $OCF_ERR_CONFIGURED
+    fi
+}
+
+case $__OCF_ACTION in
+meta-data)	meta_data
+		;;
+usage|help)	ip_usage
+		exit $OCF_SUCCESS
+		;;
+esac
+
+ip_validate
+
+case $__OCF_ACTION in
+start)		ip_start
+		;;
+stop)		ip_stop
+		;;
+status)		if ip_running; then
+			echo "running"
+			exit $OCF_SUCCESS
+		else
+			echo "stopped"
+			exit $OCF_NOT_RUNNING
+		fi
+		;;
+monitor)	ip_monitor
+		;;
+validate-all)	;;
+*)		ip_usage
+		exit $OCF_ERR_UNIMPLEMENTED
+		;;
+esac
